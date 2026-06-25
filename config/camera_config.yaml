@@ -1,0 +1,64 @@
+# RealSense D435i / external camera topic configuration for VR streaming
+# OpenArmX Head Vision System
+
+/**:
+  ros__parameters:
+    # ============================================
+    # 上游相机话题参数
+    # ============================================
+    camera:
+      color_input_topic: '/camera/color/image_raw'
+      color_camera_info_input_topic: '/camera/color/camera_info'
+      depth_input_topic: '/camera/depth/image_raw'
+      depth_camera_info_input_topic: '/camera/depth/camera_info'
+      enable_depth: false
+
+    # ============================================
+    # VR视频转发参数
+    # ============================================
+    vr_forwarder:
+      # 网络配置
+      udp_host: '0.0.0.0'  # 监听所有网络接口
+      udp_port: 5600       # 与Pico VR应用保持一致
+      tcp_host: '0.0.0.0'  # 兼容旧参数名，实际协议为UDP
+      tcp_port: 5600       # 兼容旧参数名，实际协议为UDP
+
+      # 性能配置
+      target_fps: 20       # 发送到VR的目标帧率 (建议15-30)
+      max_queue_size: 1    # 帧队列大小 (1=只保留最新帧,保持实时性)
+
+      # 编码配置
+      video_bitrate_kbps: 4000  # 视频目标码率(kbps)
+      keyframe_interval: 30     # 视频关键帧间隔(帧)
+
+      # 图像预处理
+      flip_vertical: true     # 主机端垂直翻转（默认开启，修正当前头显显示方向）
+      flip_horizontal: false  # 水平翻转
+
+      # 调试选项
+      enable_stats: true   # 启用性能统计
+      stats_interval: 5.0  # 统计输出间隔(秒)
+
+# ============================================
+# 预设配置说明
+# ============================================
+#
+# 平衡模式 (默认):
+#   - VR帧率: 20fps
+#   - 视频码率: 4000kbps
+#   - 适用: 日常使用,平衡性能和质量
+#
+# 高质量模式:
+#   - VR帧率: 25fps
+#   - 视频码率: 6000kbps
+#   - 适用: 需要更清晰画质
+#
+# 低延迟模式:
+#   - VR帧率: 25fps
+#   - 视频码率: 2500kbps
+#   - 适用: 需要低延迟操作
+#
+# 省带宽模式:
+#   - VR帧率: 15fps
+#   - 视频码率: 1500kbps
+#   - 适用: 网络带宽受限
