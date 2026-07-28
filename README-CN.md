@@ -89,10 +89,12 @@ ros2 launch openarmx_head_vision_h264 usb_stereo_side_by_side_vr.launch.py
 ros2 launch openarmx_head_vision_h264 usb_stereo_side_by_side_vr.launch.py \
   ros_ip:=0.0.0.0 \
   video_device:=auto \
+  image_width:=2560 \
+  image_height:=720 \
   udp_port:=5600 \
-  bitrate:=1500 \
-  framerate:=15 \
-  camera_fps:=30
+  bitrate:=6000 \
+  framerate:=30 \
+  camera_fps:=120
 ```
 
 `video_device:=auto` 会自动选择支持当前拼接分辨率的双目相机，例如默认 `1280x480`。
