@@ -10,6 +10,7 @@
 本包用于把相机画面发送到 VR 端。当前分两种相机链路：
 
 - RealSense D435/D435i：只作为单目彩色相机使用。
+- RealSense D405/D435/D435i 腕部相机：可分别发送左手和右手画面。
 - 独立 USB 双目相机：使用左右拼接图，ROS 端拆成左眼和右眼两路发送。
 
 RealSense 不作为双目相机使用。
@@ -70,6 +71,26 @@ VR 端参数：
 - `enable_stereo`: `false`
 - 端口：`5600`
 
+## 左右手腕相机
+
+`d435i_vr.launch.py` 可同时启动头部和左右手腕相机。腕部相机序列号默认从
+`~/.openflex/cameras_config.yaml` 的 `cameras.left_wrist` 和
+`cameras.right_wrist` 读取：
+
+```bash
+ros2 launch openarmx_head_vision_h264 d435i_vr.launch.py \
+  enable_head_video:=true \
+  enable_hand_video:=true
+```
+
+也可以只发送左右手：
+
+```bash
+ros2 launch openarmx_head_vision_h264 wrist_cameras_vr.launch.py
+```
+
+端口固定为：头部 `5600`、左手 `5601`、右手 `5602`。控制指令端口为 `5100`。
+
 ## USB 双目相机
 
 独立双目相机输入是一张左右拼接图，例如 `3840x1080`，ROS 端会拆成：
@@ -103,8 +124,9 @@ ros2 launch openarmx_head_vision_h264 usb_stereo_side_by_side_vr.launch.py \
 VR 端参数：
 
 - `enable_stereo`: `true`
-- `left_port`: `5600`
-- `right_port`: `5601`
+- 左右拼接双目视频端口：`5600`
+
+该模式使用单路左右拼接图，不使用 `5601`。`5601` 和 `5602` 保留给左右手腕视频。
 
 ## 只转发已有图像话题
 

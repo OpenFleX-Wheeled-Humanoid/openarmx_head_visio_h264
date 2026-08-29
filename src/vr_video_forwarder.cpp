@@ -46,13 +46,21 @@ constexpr std::size_t kHostMaxDatagramSize = 1200;
 constexpr std::size_t kMaxChunkPayloadSize =
     kHostMaxDatagramSize - kRtpHeaderSize - kChunkHeaderSize;
 constexpr std::size_t kMaxEncodedPayloadSize = 8 * 1024 * 1024;
+constexpr int kCodecMacroblockSize = 16;
 constexpr uint8_t kCodecH264 = 1;
 constexpr uint8_t kCodecHevc = 2;
 constexpr uint8_t kFlagKeyframe = 1U << 0;
+constexpr uint8_t kStreamLayoutMono = 1;
+constexpr uint8_t kStreamLayoutSideBySide = 2;
 
 enum class VideoCodec {
   H264,
   Hevc,
+};
+
+enum class StreamLayout {
+  Mono,
+  SideBySide,
 };
 
 std::string normalize_codec_name(std::string value) {
@@ -60,6 +68,24 @@ std::string normalize_codec_name(std::string value) {
     return static_cast<char>(std::tolower(c));
   });
   return value;
+}
+
+std::string normalize_stream_layout_name(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+    if (c == '-' || c == ' ') {
+      return '_';
+    }
+    return static_cast<char>(std::tolower(c));
+  });
+  return value;
+}
+
+const char* stream_layout_label(StreamLayout layout) {
+  return layout == StreamLayout::SideBySide ? "side_by_side" : "mono";
+}
+
+uint8_t wire_stream_layout(StreamLayout layout) {
+  return layout == StreamLayout::SideBySide ? kStreamLayoutSideBySide : kStreamLayoutMono;
 }
 
 const char* codec_label(VideoCodec codec) {
@@ -144,7 +170,9 @@ public:
   VRVideoForwarder() : Node("vr_video_forwarder") {
     target_fps_ = declare_parameter<int>("target_fps", 20);
     video_bitrate_kbps_ = declare_parameter<int>("video_bitrate_kbps", 4000);
+    enable_adaptive_bitrate_ = declare_parameter<bool>("enable_adaptive_bitrate", false);
     keyframe_interval_ = declare_parameter<int>("keyframe_interval", 30);
+    packet_pacing_us_ = declare_parameter<int>("packet_pacing_us", 250);
     const int legacy_tcp_port = declare_parameter<int>("tcp_port", 5600);
     const std::string legacy_tcp_host =
         declare_parameter<std::string>("tcp_host", "0.0.0.0");
@@ -168,10 +196,20 @@ public:
       video_codec_name_ = "h264";
     }
     max_queue_size_ = declare_parameter<int>("max_queue_size", 1);
+    const std::string stream_layout_name = normalize_stream_layout_name(
+        declare_parameter<std::string>("stream_layout", "mono"));
+    if (stream_layout_name == "side_by_side" || stream_layout_name == "sbs") {
+      stream_layout_ = StreamLayout::SideBySide;
+    } else if (stream_layout_name != "mono") {
+      RCLCPP_WARN(get_logger(), "Unsupported stream_layout=%s, falling back to mono",
+                  stream_layout_name.c_str());
+    }
     flip_vertical_ = declare_parameter<bool>("flip_vertical", false);
     flip_horizontal_ = declare_parameter<bool>("flip_horizontal", false);
     side_by_side_per_eye_flip_ = declare_parameter<bool>("side_by_side_per_eye_flip", false);
     side_by_side_swap_eyes_ = declare_parameter<bool>("side_by_side_swap_eyes", false);
+    align_output_to_macroblocks_ =
+        declare_parameter<bool>("align_output_to_macroblocks", true);
     enable_stats_ = declare_parameter<bool>("enable_stats", true);
     stats_interval_ = declare_parameter<double>("stats_interval", 5.0);
     enable_depth_ = declare_parameter<bool>("enable_depth", false);
@@ -222,6 +260,8 @@ public:
                 codec_label(video_codec_));
     RCLCPP_INFO(get_logger(), "  Target FPS: %d", target_fps_);
     RCLCPP_INFO(get_logger(), "  Bitrate: %d kbps", video_bitrate_kbps_);
+    RCLCPP_INFO(get_logger(), "  Adaptive bitrate: %s",
+                enable_adaptive_bitrate_ ? "enabled" : "disabled");
     RCLCPP_INFO(get_logger(), "  Keyframe interval: %d", keyframe_interval_);
     RCLCPP_INFO(get_logger(), "  UDP endpoint: %s:%d", udp_host_.c_str(), udp_port_);
     RCLCPP_INFO(get_logger(), "  Protocol: OAR3 over RTP-like UDP chunks, codec=%s",
@@ -229,6 +269,7 @@ public:
     RCLCPP_INFO(get_logger(), "  Image input: %s",
                 prefer_compressed_image_ ? compressed_image_topic_.c_str()
                                          : image_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "  Stream layout: %s", stream_layout_label(stream_layout_));
     RCLCPP_INFO(get_logger(), "  Latest-frame mode: enabled");
     RCLCPP_INFO(get_logger(), "  Flip vertical: %s", flip_vertical_ ? "true" : "false");
     RCLCPP_INFO(get_logger(), "  Flip horizontal: %s", flip_horizontal_ ? "true" : "false");
@@ -236,6 +277,8 @@ public:
                 side_by_side_per_eye_flip_ ? "true" : "false");
     RCLCPP_INFO(get_logger(), "  Side-by-side swap eyes: %s",
                 side_by_side_swap_eyes_ ? "true" : "false");
+    RCLCPP_INFO(get_logger(), "  Hardware decoder alignment: %s",
+                align_output_to_macroblocks_ ? "enabled" : "disabled");
     RCLCPP_INFO(get_logger(), "  Image QoS reliability: %s", image_reliability_.c_str());
     RCLCPP_INFO(get_logger(), "  Depth stream launch flag: %s (VR adapter remains color-only)",
                 enable_depth_ ? "true" : "false");
@@ -555,8 +598,9 @@ private:
       stats_.packet_loss_rate = packet_loss_rate;
     }
 
-    // 自适应码率调整
-    adjust_bitrate_based_on_feedback(packet_loss_rate, client_frames_decoded);
+    if (enable_adaptive_bitrate_) {
+      adjust_bitrate_based_on_feedback(packet_loss_rate, client_frames_decoded);
+    }
   }
 
   void adjust_bitrate_based_on_feedback(double packet_loss_rate, uint32_t frames_decoded) {
@@ -625,6 +669,7 @@ private:
       }
 
       apply_frame_orientation(frame.image);
+      align_frame_for_hardware_decoder(frame.image);
 
       if (encoder_resync_requested_.exchange(false)) {
         reset_encoder();
@@ -736,6 +781,32 @@ private:
     } else if (flip_horizontal_) {
       cv::flip(image, image, 1);
     }
+  }
+
+  void align_frame_for_hardware_decoder(cv::Mat& image) {
+    if (!align_output_to_macroblocks_ || image.empty()) {
+      return;
+    }
+
+    const int aligned_width =
+        ((image.cols + kCodecMacroblockSize - 1) / kCodecMacroblockSize) *
+        kCodecMacroblockSize;
+    const int aligned_height =
+        ((image.rows + kCodecMacroblockSize - 1) / kCodecMacroblockSize) *
+        kCodecMacroblockSize;
+    if (aligned_width == image.cols && aligned_height == image.rows) {
+      return;
+    }
+
+    const int source_width = image.cols;
+    const int source_height = image.rows;
+    cv::Mat aligned;
+    cv::copyMakeBorder(image, aligned, 0, aligned_height - image.rows, 0,
+                       aligned_width - image.cols, cv::BORDER_REPLICATE);
+    image = std::move(aligned);
+    RCLCPP_INFO_ONCE(get_logger(),
+                     "Aligned video frame from %dx%d to %dx%d for hardware decoding",
+                     source_width, source_height, aligned_width, aligned_height);
   }
 
   void enqueue_encoded_frame(EncodedFrame&& encoded) {
@@ -966,6 +1037,7 @@ private:
       chunk_header[4] = kProtocolVersion;
       chunk_header[5] = wire_codec_id(video_codec_);
       chunk_header[6] = frame.flags;
+      chunk_header[7] = wire_stream_layout(stream_layout_);
       write_big_endian_u32(chunk_header + 8, frame.frame_index);
       write_big_endian_u32(chunk_header + 12, static_cast<std::uint32_t>(frame.payload.size()));
       write_big_endian_u16(chunk_header + 16, chunk_index);
@@ -987,6 +1059,9 @@ private:
         return false;
       }
       frame_bytes_sent += static_cast<std::uint64_t>(sent);
+      if (packet_pacing_us_ > 0 && chunk_index + 1 < chunk_count) {
+        std::this_thread::sleep_for(std::chrono::microseconds(packet_pacing_us_));
+      }
     }
 
     std::lock_guard<std::mutex> lock(stats_mutex_);
@@ -1061,16 +1136,20 @@ private:
 
   int target_fps_ = 20;
   int video_bitrate_kbps_ = 4000;
+  bool enable_adaptive_bitrate_ = false;
   int keyframe_interval_ = 30;
+  int packet_pacing_us_ = 250;
   int udp_port_ = 5600;
   std::string udp_host_;
   VideoCodec video_codec_ = VideoCodec::H264;
   std::string video_codec_name_ = "h264";
   int max_queue_size_ = 1;
+  StreamLayout stream_layout_ = StreamLayout::Mono;
   bool flip_vertical_ = false;
   bool flip_horizontal_ = false;
   bool side_by_side_per_eye_flip_ = false;
   bool side_by_side_swap_eyes_ = false;
+  bool align_output_to_macroblocks_ = true;
   bool enable_stats_ = true;
   double stats_interval_ = 5.0;
   bool enable_depth_ = false;

@@ -90,11 +90,15 @@ def launch_setup(context):
                 'image_topic': '/image_raw',
                 'compressed_image_topic': '/image_raw/compressed',
                 'prefer_compressed_image': True,
+                # This stream contains the complete left/right image side by side.
+                # The VR client uses this wire-layout value to select each eye.
+                'stream_layout': 'side_by_side',
                 'udp_host': LaunchConfiguration('ros_ip'),
                 'udp_port': LaunchConfiguration('udp_port'),
                 'video_codec': 'h264',
                 'video_bitrate_kbps': LaunchConfiguration('bitrate'),
                 'target_fps': LaunchConfiguration('framerate'),
+                'align_output_to_macroblocks': True,
                 'enable_stats': True,
                 'stats_interval': 5.0,
             }]),
@@ -130,7 +134,7 @@ def launch_setup(context):
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('ros_ip', default_value='0.0.0.0'),
-        DeclareLaunchArgument('udp_port', default_value='5600'),
+        DeclareLaunchArgument('udp_port', default_value='5603'),
         DeclareLaunchArgument('bitrate', default_value='8000'),
         DeclareLaunchArgument('framerate', default_value='30'),
         DeclareLaunchArgument('camera_fps', default_value='30'),

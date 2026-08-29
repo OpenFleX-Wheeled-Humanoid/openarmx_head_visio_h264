@@ -15,30 +15,114 @@ from pathlib import Path
 import yaml
 
 
-def _default_head_serial() -> str:
+def _default_camera_serial(camera_key: str) -> str:
     config_path = Path.home() / ".openflex" / "cameras_config.yaml"
     if not config_path.exists():
         return ""
     try:
         with config_path.open("r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
-        return str(data.get("cameras", {}).get("head", {}).get("serial_no", "")).strip()
+        return str(data.get("cameras", {}).get(camera_key, {}).get("serial_no", "")).strip()
     except Exception:
         return ""
 
 
-def _serial_param(context) -> str:
-    serial_number = LaunchConfiguration('serial_number').perform(context).strip()
+def _default_head_serial() -> str:
+    return _default_camera_serial('head')
+
+
+def _serial_param(context, argument_name: str = 'serial_number') -> str:
+    serial_number = LaunchConfiguration(argument_name).perform(context).strip()
     if not serial_number:
         return ''
     return serial_number if serial_number.startswith('_') else f'_{serial_number}'
+
+
+def _as_bool(context, argument_name: str) -> bool:
+    return LaunchConfiguration(argument_name).perform(context).strip().lower() in {
+        '1', 'true', 'yes', 'on'
+    }
+
+
+def _create_wrist_camera(context, side: str, profile: str) -> Node:
+    camera_name = f'cam_{side}'
+    camera_type = LaunchConfiguration(f'{camera_name}_type').perform(context).strip().upper()
+    if camera_type not in {'D405', 'D435', 'D435I'}:
+        raise RuntimeError(
+            f'Unsupported {camera_name}_type={camera_type}; use D405, D435, or D435I'
+        )
+
+    serial_number = _serial_param(context, f'{camera_name}_serial')
+    if not serial_number:
+        raise RuntimeError(f'{camera_name}_serial is required when enable_hand_video=true')
+
+    if camera_type == 'D405':
+        profile_parameters = {'depth_module.color_profile': profile}
+        option_module = 'depth_module'
+    else:
+        profile_parameters = {'rgb_camera.color_profile': profile}
+        option_module = 'rgb_camera'
+
+    return Node(
+        package='realsense2_camera',
+        executable='realsense2_camera_node',
+        name=camera_name,
+        namespace=camera_name,
+        parameters=[{
+            'serial_no': serial_number,
+            'enable_color': True,
+            'enable_depth': False,
+            'align_depth.enable': False,
+            'enable_infra1': False,
+            'enable_infra2': False,
+            'enable_gyro': False,
+            'enable_accel': False,
+            'pointcloud.enable': False,
+            f'{option_module}.enable_auto_exposure': _as_bool(
+                context, 'hand_enable_auto_exposure'),
+            f'{option_module}.enable_auto_white_balance': _as_bool(
+                context, 'hand_enable_auto_white_balance'),
+            f'{option_module}.backlight_compensation': _as_bool(
+                context, 'hand_backlight_compensation'),
+            f'{option_module}.brightness': int(
+                LaunchConfiguration('hand_brightness').perform(context)),
+            **profile_parameters,
+        }],
+        remappings=[
+            (f'/{camera_name}/{camera_name}/color/image_raw',
+             f'/{camera_name}/color/image_raw'),
+            (f'/{camera_name}/{camera_name}/color/camera_info',
+             f'/{camera_name}/color/camera_info'),
+        ],
+        output='screen',
+    )
+
+
+def _create_wrist_stream_source(side: str) -> Node:
+    camera_name = f'cam_{side}'
+    return Node(
+        package='openarmx_head_vision_h264',
+        executable='camera_stream_source',
+        name=f'{side}_wrist_camera_stream_source',
+        parameters=[{
+            'enable_depth': False,
+            'color_input_topic': f'/{camera_name}/color/image_raw',
+            'color_camera_info_input_topic': f'/{camera_name}/color/camera_info',
+            'color_output_topic': f'/vision/{side}/color/image_raw',
+            'color_camera_info_output_topic': f'/vision/{side}/color/camera_info',
+            'image_reliability': 'reliable',
+            'enable_stats': True,
+            'stats_interval': 5.0,
+        }],
+        output='screen',
+    )
 
 
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'config_mode',
-            default_value='low_latency',
+            default_value='balanced',
             description='Configuration preset: balanced, high_quality, low_latency, bandwidth_saving, custom'
         ),
         DeclareLaunchArgument(
@@ -46,6 +130,43 @@ def generate_launch_description():
             default_value=_default_head_serial(),
             description='Head RealSense D435i serial number; defaults to ~/.openflex/cameras_config.yaml cameras.head.serial_no; empty means auto-select'
         ),
+        DeclareLaunchArgument(
+            'enable_head_video', default_value='true',
+            description='Start and forward the head RealSense video on port 5600'
+        ),
+        DeclareLaunchArgument(
+            'enable_hand_video', default_value='false',
+            description='Legacy alias: start and forward both wrist videos'
+        ),
+        DeclareLaunchArgument(
+            'enable_left_hand_video', default_value='false',
+            description='Start and forward the left wrist video on port 5601'
+        ),
+        DeclareLaunchArgument(
+            'enable_right_hand_video', default_value='false',
+            description='Start and forward the right wrist video on port 5602'
+        ),
+        DeclareLaunchArgument(
+            'cam_left_serial', default_value=_default_camera_serial('left_wrist'),
+            description='Left wrist RealSense serial number'
+        ),
+        DeclareLaunchArgument(
+            'cam_right_serial', default_value=_default_camera_serial('right_wrist'),
+            description='Right wrist RealSense serial number'
+        ),
+        DeclareLaunchArgument('cam_left_type', default_value='D405'),
+        DeclareLaunchArgument('cam_right_type', default_value='D405'),
+        DeclareLaunchArgument('hand_color_width', default_value='424'),
+        DeclareLaunchArgument('hand_color_height', default_value='240'),
+        DeclareLaunchArgument('hand_color_fps', default_value='30'),
+        DeclareLaunchArgument('hand_vr_fps', default_value='15'),
+        DeclareLaunchArgument('hand_video_bitrate_kbps', default_value='1000'),
+        DeclareLaunchArgument('hand_enable_auto_exposure', default_value='true'),
+        DeclareLaunchArgument('hand_enable_auto_white_balance', default_value='true'),
+        DeclareLaunchArgument('hand_backlight_compensation', default_value='true'),
+        DeclareLaunchArgument('hand_brightness', default_value='32'),
+        DeclareLaunchArgument('left_udp_port', default_value='5601'),
+        DeclareLaunchArgument('right_udp_port', default_value='5602'),
         DeclareLaunchArgument(
             'color_width',
             default_value='640',
@@ -271,6 +392,7 @@ def launch_setup(context):
             'video_bitrate_kbps': video_bitrate_kbps,
             'keyframe_interval': keyframe_interval,
             'video_codec': video_codec,
+            'stream_layout': 'mono',
             'udp_port': udp_port,
             'udp_host': udp_host,
             'tcp_port': tcp_port,
@@ -278,6 +400,7 @@ def launch_setup(context):
             'max_queue_size': 1,
             'flip_vertical': ParameterValue(LaunchConfiguration('flip_vertical'), value_type=bool),
             'flip_horizontal': ParameterValue(LaunchConfiguration('flip_horizontal'), value_type=bool),
+            'align_output_to_macroblocks': True,
             'image_reliability': 'reliable',
             'enable_stats': True,
             'stats_interval': 5.0,
@@ -289,4 +412,74 @@ def launch_setup(context):
         output='screen'
     )
 
-    return [realsense_driver, source_node, vr_forwarder_node]
+    enable_head_video = _as_bool(context, 'enable_head_video')
+    legacy_hand_video = _as_bool(context, 'enable_hand_video')
+    enable_left_hand_video = legacy_hand_video or _as_bool(context, 'enable_left_hand_video')
+    enable_right_hand_video = legacy_hand_video or _as_bool(context, 'enable_right_hand_video')
+    if not enable_head_video and not enable_left_hand_video and not enable_right_hand_video:
+        raise RuntimeError(
+            'At least one of enable_head_video, enable_left_hand_video, or '
+            'enable_right_hand_video must be true'
+        )
+
+    actions = []
+    if enable_head_video:
+        actions.extend([realsense_driver, source_node, vr_forwarder_node])
+
+    if enable_left_hand_video or enable_right_hand_video:
+        left_serial = LaunchConfiguration('cam_left_serial').perform(context).strip()
+        right_serial = LaunchConfiguration('cam_right_serial').perform(context).strip()
+        if (
+            enable_left_hand_video and enable_right_hand_video and left_serial and right_serial
+            and left_serial.lstrip('_') == right_serial.lstrip('_')
+        ):
+            raise RuntimeError('cam_left_serial and cam_right_serial must be different')
+
+        hand_width = int(LaunchConfiguration('hand_color_width').perform(context))
+        hand_height = int(LaunchConfiguration('hand_color_height').perform(context))
+        hand_fps = int(LaunchConfiguration('hand_color_fps').perform(context))
+        hand_profile = f'{hand_width}x{hand_height}x{hand_fps}'
+        hand_vr_fps = int(LaunchConfiguration('hand_vr_fps').perform(context))
+        hand_bitrate = int(LaunchConfiguration('hand_video_bitrate_kbps').perform(context))
+
+        selected_sides = []
+        if enable_left_hand_video:
+            selected_sides.append(('left', 'left_udp_port'))
+        if enable_right_hand_video:
+            selected_sides.append(('right', 'right_udp_port'))
+        for side, port_argument in selected_sides:
+            port = int(LaunchConfiguration(port_argument).perform(context))
+            actions.extend([
+                _create_wrist_camera(context, side, hand_profile),
+                _create_wrist_stream_source(side),
+                Node(
+                    package='openarmx_head_vision_h264',
+                    executable='vr_video_forwarder',
+                    name=f'{side}_wrist_vr_video_forwarder',
+                    parameters=[{
+                        'target_fps': hand_vr_fps,
+                        'video_bitrate_kbps': hand_bitrate,
+                        'keyframe_interval': keyframe_interval,
+                        'video_codec': video_codec,
+                        'stream_layout': 'mono',
+                        'image_topic': f'/vision/{side}/color/image_raw',
+                        'udp_port': port,
+                        'udp_host': udp_host,
+                        'tcp_port': port,
+                        'tcp_host': tcp_host,
+                        'max_queue_size': 1,
+                        'flip_vertical': ParameterValue(
+                            LaunchConfiguration('flip_vertical'), value_type=bool),
+                        'flip_horizontal': ParameterValue(
+                            LaunchConfiguration('flip_horizontal'), value_type=bool),
+                        'align_output_to_macroblocks': True,
+                        'image_reliability': 'reliable',
+                        'enable_stats': True,
+                        'stats_interval': 5.0,
+                        'enable_depth': False,
+                    }],
+                    output='screen',
+                ),
+            ])
+
+    return actions

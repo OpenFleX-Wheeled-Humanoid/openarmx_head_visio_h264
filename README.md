@@ -10,6 +10,7 @@ English | [中文](./README-CN.md)
 This package is used to send camera images to the VR side. Currently, there are two camera links:
 
 - RealSense D435/D435i: Used only as a monocular color camera.
+- RealSense D405/D435/D435i wrist cameras: Left and right wrist streams can be forwarded independently.
 - Independent USB stereo camera: Uses left-right stitched images, ROS side splits them into left eye and right eye streams.
 
 RealSense is not used as a stereo camera.
@@ -70,6 +71,27 @@ VR side parameters:
 - `enable_stereo`: `false`
 - Port: `5600`
 
+## Left and Right Wrist Cameras
+
+`d435i_vr.launch.py` can start the head camera and both wrist cameras. Wrist
+serial numbers default to `cameras.left_wrist` and `cameras.right_wrist` in
+`~/.openflex/cameras_config.yaml`:
+
+```bash
+ros2 launch openarmx_head_vision_h264 d435i_vr.launch.py \
+  enable_head_video:=true \
+  enable_hand_video:=true
+```
+
+To forward only the wrist cameras:
+
+```bash
+ros2 launch openarmx_head_vision_h264 wrist_cameras_vr.launch.py
+```
+
+Ports are fixed by default: head `5600`, left wrist `5601`, right wrist
+`5602`. The ROS control port is `5100`.
+
 ## USB Stereo Camera
 
 The independent stereo camera input is a left-right stitched image, such as `3840x1080`, ROS side will split it into:
@@ -101,8 +123,10 @@ ros2 launch openarmx_head_visio_h264 usb_stereo_side_by_side_vr.launch.py \
 VR side parameters:
 
 - `enable_stereo`: `true`
-- `left_port`: `5600`
-- `right_port`: `5601`
+- Side-by-side stereo video port: `5600`
+
+This mode sends one left-right stitched stream. Port `5601` is not used by
+this mode and remains reserved for the left wrist stream.
 
 ## Forward Existing Image Topics Only
 
