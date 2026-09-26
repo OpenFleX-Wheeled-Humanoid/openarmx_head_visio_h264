@@ -1,0 +1,6 @@
+vr_stereo_side_by_side_forwarder:
+  ros__parameters:
+    flip_vertical: true
+    flip_horizontal: false
+    side_by_side_per_eye_flip: true
+    side_by_side_swap_eyes: true

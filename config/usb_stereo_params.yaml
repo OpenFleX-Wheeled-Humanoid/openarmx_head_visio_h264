@@ -1,0 +1,21 @@
+usb_stereo_camera:
+  ros__parameters:
+    video_device: "auto"
+    image_width: 1280
+    image_height: 720
+    framerate: 30.0
+    pixel_format: "mjpeg2rgb"
+    camera_name: "stereo_camera"
+    io_method: "mmap"
+    frame_id: "stereo_camera"
+    brightness: -1
+    contrast: -1
+    saturation: -1
+    sharpness: -1
+    gain: -1
+    auto_white_balance: true
+    white_balance: 4000
+    autoexposure: true
+    exposure: 100
+    autofocus: false
+    focus: -1
